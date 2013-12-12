@@ -1,0 +1,266 @@
+to subscribe:
+ - master: registerSubscriber()
+   - receive list of publisher xmlrpc URIs
+ - each publisher URI: requestTopic( callerID, topic, ["TCPROS"])
+   - receive TCPROS <hostname> <port>
+ - each received host/port: open socket to receive data?  This part is
+   not yet clear, and seems to involve sending message definitions and
+   md5 sums back and forth.
+ - implement an xmlrpc server, listen for publisherUpdate() calls giving a new list of publishers.  When one is added or removed, do the needful.
+
+wow.
+
+For reading and possibly writing params from/to XML, I need to create
+a generic data structure which matches the xml schema that ros uses.
+If I do it right, I can have encoding/xml.Unmarshal() do all the work.
+
+params
+ - 0 or more param children
+
+param
+ - 1 value child
+
+value: just one of
+ - int,
+ - string, or
+ - array
+
+int
+ - integer
+
+string
+ - string
+
+array
+ - 1 data child
+
+data
+ - 0 or more value children
+
+---
+
+Overall, how is the topic subscription stuff going to work?
+
+In roscpp, a subscription needs a callback function.
+
+Here, I could say that a subscription just creates a read-only channel.
+
+A callback could be an optional extra.
+
+In ros, if a message buffer fills up, the oldest message is lost and
+the newest is kept.  In go, when a buffered channel fills up, the
+writer blocks.  I should maintain the existing ros buffer semantics.
+
+-----------------------------------------------------------------------
+Fri Aug  9, 2013
+
+xml returned from /chatter node in response to requestTopic() does not
+match that of xml returned from master.  Here is from /chatter node:
+
+<value>
+  <array>
+    <data>
+      <value>
+        <i4>1</i4>
+      </value>
+      <value>
+      </value>
+      <value>
+        <array>
+          <data>
+            <value>TCPROS</value>
+            <value>laptop-of-love</value>
+            <value>
+              <i4>55882</i4>
+            </value>
+          </data>
+        </array>
+      </value>
+    </data>
+  </array>
+</value>
+
+-----------------------------------------------------------------------
+Mon Aug 12, 2013
+
+got basic message subscription working.
+
+todo:
+ - build more of node/topic class structure
+ - write xmlrpc server piece that listens for publisherUpdate() calls
+ - connect up generated messages and deserialize all message structs
+ - write publisher classes
+ - write service calls
+
+for node structure, design features:
+ - can use either a net-connected or process-local "master", nodes don't care.
+   - this will mean that every time you write a node you won't just write a "main", you'll write a Node class.
+   - if you only want the one node running in Go, it will be extra code:
+
+     import (
+       "mynode"
+       "rosgo/ros"
+     )
+     func main() {
+       node_context := ros.ContextFromEnvAndArgs()
+       mynode.Run(master, node_context)
+     }
+
+   - master is the net connection to the ROS master, here in a form
+     that reads environment variables like ROS_MASTER_URI and ROS_IP.
+
+   - node_context encodes everything that can come from the command
+     line of a node, like param:=value, __name:=nodename,
+     internal_topic:=external_topic.  Hmm, parameter setting and topic
+     remapping look the same, not sure how to tell them apart.
+
+     - I guess you don't tell them apart, you just keep a dictionary
+       of remappings.  Then when anyone asks for a topic OR a
+       rosparam, you first look it up in the remapping dictionary and
+       see if it needs to be changed.
+
+     - problem: __master, __ip, and __hostname special params override
+       environment variables, so the arg-parsing needs to inform the
+       master creation.  Probably just group net-master and arg-parsing.
+
+   - it is essentially a launch file for one node, and we already have a launch file format.
+
+   - even when we do have multiple Go nodes, launching them all from a
+     launch.go file like this is a complete duplication of roslaunch
+     capabilities.  That's a shame.
+
+   - If we could load a .go file from another at runtime, could make
+     it work like c++ nodelets.  That would still leave the individual
+     nodes as nice things that don't have the network environment
+     baked into them, for testability and flexability.  BUT go does
+     not support shared libraries or dlopen() functionality at this
+     time.
+
+If we want to run multiple nodes in a single executable, how do we
+handle command-line args?  Master and net stuff is fine, it applies to
+all, but what about about parameters and topic remapping?  I guess it
+can work if the node names prefix things...  probably ok actually.
+
+Topics at the global namespace (leading slash '/') are global anyway,
+so should be fine.
+
+So NodeContext is not the same as Node, because NodeContext can be
+shared between multiple Nodes.
+
+So what is a meaningful division between nodes if the pub/sub is all shared?
+
+answer: node names.
+
+is that it?  That's the whole difference?
+
+consider: a single node can pub and sub the same topic.  A node can
+call its own service call.  It really may be that node name is the
+only meaningful distinction between two nodes.
+
+NodeContext:
+ - param/topic/service remappings
+ - master API // all master api stuff at this level needs fully qualified names.
+   - pub/sub
+   - service calls
+   - param get/set
+
+Node:
+ - name
+ - copy of NodeContext API, with names modified by node name.
+
+interface names:
+
+NodeContext could be called MasterAPI or just Master.  Or RosComm for
+ros communication.
+
+Node could be called NamedRosComm or NameSpace.  Or NodeHandle to
+match C++ API.
+
+How about:
+
+type Node interface
+all these would implement it:
+ - type NamedNode struct // created with name, name likely not changeable
+ - type LocalCommNode struct // for go-go internal comms
+ - type NetCommNode struct // for go to external comms
+
+NamedNode would have another Node interface as a member which it would
+pass through to, just modifying names.
+
+NetCommNode would have a LocalCommNode member which it would parallel comms with as appropriate.
+
+hmm, but LocalCommNode should not have ros-param API in it.  Separate?
+
+type Node struct // contains:
+ - type Remapper interface // only has calls for reading remappings, not for setting.
+ - type Params interface
+ - type Comms interface
+
+type LocalComms struct // implements Comms
+type NetComms struct // implements Comms
+type RemappedComms struct // implements Comms
+ - comms Comms
+ - remapper Remapper
+
+type LocalParams struct // implements Params, probably only used for testing.  get/set is purely local.
+type NetParams struct // implements Params
+type RemappedParams struct // implements Params
+ - params Params
+ - remapper Remapper
+
+type EnvAndArgsRemapper struct // implements Remapper, reads remappings from env and os.Args.
+type LocalRemapper struct // implements Remapper, has functions for setting mappings
+type RemapperChain struct // implements Remapper, contains an ordered list of Remappers.
+
+typical setup would be: (created by calling NewStdNode(context, "name"))
+
+Node:
+ - RemapperChain
+   - NodeNameRemapper // takes a node name
+   - RemapperChain // pointer to Remapper from context
+     - LocalRemapper // second applied
+     - EnvAndArgsRemapper // third applied, so command line overrides overrides/modifies settings in .go code
+ - RemappedParams // has a pointer to the top RemapperChain in this Node.
+   - NetParams // pointer to Remapper from context
+ - RemappedComms // has a pointer to the top RemapperChain in this Node.
+   - NetComms // pointer to Remapper from context
+     - LocalComms // used by NetComms for internal comm.
+
+where does it get its node name?
+
+maybe "NodeNameRemapper" in the RemapperChain?: yes
+
+if a node says it is named "foo", the local remapper in the launch.go
+should have first crack at changing it, and after that the
+command-line args should have.  So that argues for a NodeNameRemapper first in the list.
+
+So where does this leave the NodeContext from above, where we read it once and hand it to many internal nodes?
+
+Can be same, but without NodeNameRemapper in chain.  Then how does it
+relate to the nodes it "manages"?  Does it do any management?  It
+must, because it is the only way (without globals) to connect all the
+LocalComms.
+
+A NodeContext could be a struct like:
+
+type NodeContext struct {
+ - Remapper
+ - Params
+ - Comms
+}
+
+Then each of those contents would be/have pointers to objects shared between all subnodes.
+
+LocalComms connects all nodes because they all talk through the same LocalComms instance.
+
+BUT that doesn't give a way to have the NodeNameRemapper remap topic
+names before they get to the LocalComms. - solved, added RemappedComms
+and RemappedParams wrappers above.
+
+So now with RemappedComms and RemappedParams and the NodeContext
+above, we have something where the instances pointed to in NodeContext
+are shared among all Nodes, with only the wrappers (RemappedComms and
+RemappedParams) and the NodeNameRemapper being unique to the
+individual Nodes.
+
+
