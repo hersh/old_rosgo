@@ -18,10 +18,10 @@ func findPackagesInDir( dirname string,	package_dirs_by_name map[string] string 
 	if err != nil {
 		return
 	}
-	// If there's a manifest.xml in the directory, it is a package
+	// If there's a manifest.xml or a package.xml in the directory, it is a package
 	// and we can stop recursing.
 	for _, entry := range entries {
-		if entry.Name() == "manifest.xml" {
+		if entry.Name() == "manifest.xml" || entry.Name() == "package.xml" {
 			package_name := path.Base( dirname )
 			_, package_found_already := package_dirs_by_name[ package_name ]
 			if !package_found_already {
@@ -30,7 +30,7 @@ func findPackagesInDir( dirname string,	package_dirs_by_name map[string] string 
 			return
 		}
 	}
-	// If no manifest.xml, must not be a package directory, so
+	// If no manifest.xml or package.xml, must not be a package directory, so
 	// recurse into each subdir.
 	for _, entry := range entries {
 		if entry.IsDir() {
