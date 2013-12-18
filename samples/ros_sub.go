@@ -8,7 +8,11 @@ import (
 
 func main() {
 	chatter_chan := make(chan string)
-	comm.Subscribe("/chatter", chatter_chan)
+	_, err := comm.Subscribe("/chatter", chatter_chan)
+	if err != nil {
+		fmt.Printf("Error subscribing: %v", err)
+		return
+	}
 	fmt.Printf("subscribed. waiting 10 seconds\n")
 	go func() {
 		for {
