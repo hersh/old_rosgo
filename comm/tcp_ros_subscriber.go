@@ -13,6 +13,9 @@ import (
 type publisherConnection struct {
 	host string
 	port int
+	recvr_node_name string
+	topic_name string
+	type_name string
 }
 
 type TcpRosSubscriber struct {
@@ -39,7 +42,9 @@ func requestTopic(publisher_uri, caller_id, topic string, response_data interfac
 	return pub_rpc.Call("requestTopic", params, response_data)
 }
 
-func Subscribe(topic string, channel interface{}) (*TcpRosSubscriber, error) {
+func Subscribe(node_name, topic_name, type_name string,
+	channel interface{}) (*TcpRosSubscriber, error) {
+
 	rpc_client := xmlrpc.NewClient("http://localhost:11311")
 
 	hostname, err := os.Hostname()
@@ -52,7 +57,7 @@ func Subscribe(topic string, channel interface{}) (*TcpRosSubscriber, error) {
 
 	var response2 xmlrpc.MethodResponse
 	err = rpc_client.CallStrings("registerSubscriber",
-		[]string{"/chubbles", "/chatter", "rosgraph_msgs/Log", msg_uri},
+		[]string{node_name, topic_name, type_name, msg_uri},
 		&response2)
 	if err != nil {
 		return nil, err
@@ -70,7 +75,7 @@ func Subscribe(topic string, channel interface{}) (*TcpRosSubscriber, error) {
 		return &sub, nil
 	}
 	publishers := *pub_ptr
-	caller_id := "/chubbles"
+	caller_id := node_name
 	for i := range publishers {
 		publisher_uri := *publishers[i].String
 		var response xmlrpc.MethodResponse
@@ -94,6 +99,9 @@ func Subscribe(topic string, channel interface{}) (*TcpRosSubscriber, error) {
 		publisher := new(publisherConnection)
 		publisher.host = host
 		publisher.port = port
+		publisher.recvr_node_name = node_name
+		publisher.topic_name = topic_name
+		publisher.type_name = type_name
 		sub.publishers = append(sub.publishers, publisher)
 		go publisher.read(channel)
 	}
@@ -172,11 +180,11 @@ func (pub *publisherConnection) read(channel interface{}) error {
 	// TODO: all these values should be read from appropriate places.
 	header := map[string]string{
 		"message_definition": "string data",
-		"callerid":           "/chubbles",
-		"topic":              "/chatter",
+		"callerid":           pub.recvr_node_name,
+		"topic":              pub.topic_name,
 		"tcp_nodelay":        "1",
 		"md5sum":             "992ce8a1687cec8c8bd883ec73ca41d1",
-		"type":               "std_msgs/String",
+		"type":               pub.type_name,
 	}
 	serialized_header := encodeHeader(header)
 	header_buffer := bytes.NewBuffer(serialized_header)

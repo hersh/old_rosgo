@@ -8,7 +8,7 @@ import (
 
 func main() {
 	chatter_chan := make(chan string)
-	_, err := comm.Subscribe("/chatter", chatter_chan)
+	_, err := comm.Subscribe("/chubbles", "/chatter", "std_msgs/String", chatter_chan)
 	if err != nil {
 		fmt.Printf("Error subscribing: %v", err)
 		return
